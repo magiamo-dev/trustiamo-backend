@@ -19,7 +19,7 @@ export default async function handler(req, res) {
       inviterCode: inviterCode || 'TRS-000001',
       giftWord: giftWord || '',
       inviteeName: inviteeName || '',
-      used: false,
+      permanent: true,
       createdAt: new Date().toISOString(),
     };
     await redis.set(`invite:${code}`, JSON.stringify(invite));
@@ -40,7 +40,6 @@ export default async function handler(req, res) {
     const raw = await redis.get(`invite:${code}`);
     if (!raw) return res.status(404).json({ error: 'Invite not found' });
     const invite = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (invite.used) return res.status(400).json({ error: 'Invite already used' });
 
     const counter = await redis.incr('trs:counter');
     const trsId = `TRS-${String(counter + 4).padStart(6, '0')}`;
@@ -61,10 +60,14 @@ export default async function handler(req, res) {
       inviterCode: trsId,
       giftWord: '',
       inviteeName: '',
-      used: false,
+      permanent: true,
       createdAt: new Date().toISOString(),
     }));
-    await redis.set(`invite:${code}`, JSON.stringify({ ...invite, used: true, memberId: trsId }));
+
+    // Only mark as used if NOT permanent
+    if (!invite.permanent) {
+      await redis.set(`invite:${code}`, JSON.stringify({ ...invite, used: true, memberId: trsId }));
+    }
 
     return res.status(200).json({
       trsId,
