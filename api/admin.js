@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     await redis.set(`member:${trsId}`, JSON.stringify(member));
     return res.status(200).json({ updated: trsId, networkName: clean });
   }
-if (req.method === 'POST' && req.query.action === 'seed') {
+if (req.query.action === 'seed') {
     const founder = {
       networkName: 'Naked Sequoia',
       trsId: 'TRS-000001',
