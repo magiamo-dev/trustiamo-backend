@@ -40,7 +40,17 @@ export default async function handler(req, res) {
     await redis.set(`member:${trsId}`, JSON.stringify(member));
     return res.status(200).json({ updated: trsId, networkName: clean });
   }
-
+if (req.method === 'POST' && req.query.action === 'seed') {
+    const founder = {
+      networkName: 'Naked Sequoia',
+      trsId: 'TRS-000001',
+      personalCode: 'w7i2yb2',
+      invitedBy: null,
+      joinedAt: '2026-05-10T00:00:00.000Z',
+    };
+    await redis.set('member:TRS-000001', JSON.stringify(founder));
+    return res.status(200).json({ seeded: 'TRS-000001', networkName: 'Naked Sequoia' });
+  }
   if (req.method === 'POST' && req.query.action === 'delete') {
     const { trsId } = req.body;
     if (!trsId) return res.status(400).json({ error: 'TRS ID required' });
