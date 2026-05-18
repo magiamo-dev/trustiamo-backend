@@ -96,5 +96,20 @@ export default async function handler(req, res) {
     return res.status(200).json({ cleared: true });
   }
 
+  // Count invites for a TRS ID — public, no auth needed
+  if (req.method === 'GET' && req.query.action === 'invitecount') {
+    const { trsId } = req.query;
+    if (!trsId) return res.status(400).json({ error: 'TRS ID required' });
+
+    const keys = await redis.keys('member:*');
+    let count = 0;
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (member.invitedBy === trsId) count++;
+    }
+    return res.status(200).json({ count });
+  }
+
   return res.status(405).json({ error: 'Method not allowed' });
 }
