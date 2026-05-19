@@ -66,7 +66,7 @@ export default async function handler(req, res) {
 
   // Update profile
   if (req.method === 'POST' && req.query.action === 'update') {
-    const { trsId, specialty, city, pulse, connectionOpen } = req.body;
+    const { trsId, specialty, city, vouch, pulse, connectionOpen } = req.body;
     if (!trsId) return res.status(400).json({ error: 'TRS ID required' });
 
     const raw = await redis.get(`member:${trsId}`);
@@ -76,6 +76,7 @@ export default async function handler(req, res) {
 
     if (specialty !== undefined) member.specialty = specialty;
     if (city !== undefined) member.city = city;
+    if (vouch !== undefined) member.vouch = vouch;
     if (pulse !== undefined) member.pulse = pulse;
     if (connectionOpen !== undefined) member.connectionOpen = connectionOpen;
 
