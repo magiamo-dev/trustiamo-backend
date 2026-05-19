@@ -38,29 +38,30 @@ export default async function handler(req, res) {
     return res.status(200).json({ found: false });
   }
 
-  // Claim profile — connect phone to existing TRS ID
+  // Claim profile — connect email to existing record by network name
   if (req.method === 'POST' && req.query.action === 'claim') {
-    const { trsId, phone, networkName } = req.body;
-    if (!trsId || !phone || !networkName) {
-      return res.status(400).json({ error: 'TRS ID, phone, and network name required' });
+    const { email, networkName } = req.body;
+    if (!email || !networkName) {
+      return res.status(400).json({ error: 'Email and network name required' });
     }
 
-    const raw = await redis.get(`member:${trsId}`);
-    if (!raw) return res.status(404).json({ error: 'Profile not found' });
+    const clean = email.toLowerCase().trim();
+    const keys = await redis.keys('member:*');
 
-    const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
-
-    if (member.networkName.toLowerCase() !== networkName.toLowerCase()) {
-      return res.status(400).json({ error: 'Network name does not match our records' });
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (member.networkName.toLowerCase() === networkName.toLowerCase()) {
+        if (member.email && member.email.toLowerCase() !== clean) {
+          return res.status(400).json({ error: 'This profile has already been claimed' });
+        }
+        member.email = clean;
+        await redis.set(key, JSON.stringify(member));
+        return res.status(200).json({ claimed: true, trsId: member.trsId });
+      }
     }
 
-    if (member.phone) {
-      return res.status(400).json({ error: 'This profile has already been claimed' });
-    }
-
-    member.phone = phone.replace(/\D/g, '');
-    await redis.set(`member:${trsId}`, JSON.stringify(member));
-    return res.status(200).json({ claimed: true, trsId: member.trsId });
+    return res.status(404).json({ error: 'Network name does not match our records' });
   }
 
   // Update profile
