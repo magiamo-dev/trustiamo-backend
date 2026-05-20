@@ -112,6 +112,20 @@ export default async function handler(req, res) {
     }
     return res.status(200).json({ count });
   }
+// Check if network name is available
+  if (req.method === 'GET' && req.query.action === 'checkname') {
+    const { name } = req.query;
+    if (!name) return res.status(400).json({ error: 'Name required' });
 
+    const keys = await redis.keys('member:*');
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (member.networkName.toLowerCase() === name.toLowerCase()) {
+        return res.status(200).json({ available: false });
+      }
+    }
+    return res.status(200).json({ available: true });
+  }
   return res.status(405).json({ error: 'Method not allowed' });
 }
