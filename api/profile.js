@@ -121,7 +121,7 @@ export default async function handler(req, res) {
     for (const key of keys) {
       const raw = await redis.get(key);
       const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (member.networkName.toLowerCase() === name.toLowerCase()) {
+      if (member.networkName.toLowerCase() === name.toLowerCase() && member.email) {
         return res.status(200).json({ available: false });
       }
     }
