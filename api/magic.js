@@ -35,7 +35,8 @@ export default async function handler(req, res) {
 
     await redis.set(`magic:${token}`, JSON.stringify({ email: clean, expires }), { ex: 900 });
 
-    const magicUrl = `https://me.trustiamo.com?token=${token}`;
+    const returnUrl = req.body.returnUrl || 'https://me.trustiamo.com';
+    const magicUrl = `${returnUrl}?token=${token}`;
 
     const html = `
       <div style="background:#060504;padding:48px 24px;font-family:Georgia,serif;text-align:center;max-width:480px;margin:0 auto;">
