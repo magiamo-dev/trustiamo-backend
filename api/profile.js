@@ -127,5 +127,25 @@ export default async function handler(req, res) {
     }
     return res.status(200).json({ available: true });
   }
+  // List all members — for forest visualization
+  if (req.method === 'GET' && req.query.action === 'list') {
+    const keys = await redis.keys('member:*');
+    const members = [];
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      members.push({
+        trsId: member.trsId,
+        networkName: member.networkName,
+        invitedBy: member.invitedBy || null,
+        specialty: member.specialty || '',
+        city: member.city || '',
+        pulse: member.pulse || null,
+        personalCode: member.personalCode,
+        joinedAt: member.joinedAt,
+      });
+    }
+    return res.status(200).json({ members });
+  }
   return res.status(405).json({ error: 'Method not allowed' });
 }
