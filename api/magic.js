@@ -5,6 +5,12 @@ const redis = Redis.fromEnv();
 const SESSION_DAYS = 30;
 const SESSION_SECONDS = SESSION_DAYS * 24 * 60 * 60;
 
+// Stripe statuses that grant member tier on magic-link sign-in.
+// Decision A (Phase 3.5): active + trialing only. All other statuses
+// (past_due, canceled, incomplete, incomplete_expired, unpaid, paused)
+// fall back to traveler tier.
+const MEMBER_TIER_STATUSES = new Set(['active', 'trialing']);
+
 async function sendEmail(to, subject, html) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -51,6 +57,38 @@ function setOriginHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+// Look up trsId by scanning member:* records for matching email.
+// O(n) scan — matches existing behavior. Optimization parked for later.
+async function findTrsIdByEmail(email) {
+  const keys = await redis.keys('member:*');
+  for (const key of keys) {
+    const raw = await redis.get(key);
+    const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (member.email && member.email.toLowerCase() === email.toLowerCase()) {
+      return member.trsId;
+    }
+  }
+  return null;
+}
+
+// Look up mbrId and status by direct key lookup on subscriber:{email}.
+// O(1).
+async function findSubscriberByEmail(email) {
+  const raw = await redis.get(`subscriber:${email}`);
+  if (!raw) return null;
+  const sub = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return { mbrId: sub.mbrId, status: sub.status };
+}
+
+// Compute tier from identity pieces.
+// Decision 3 (Phase 3.5): tier reflects deepest entitlement.
+// somebody (trsId present) > member (active/trialing subscriber) > traveler.
+function computeTier(trsId, subscriber) {
+  if (trsId) return 'somebody';
+  if (subscriber && MEMBER_TIER_STATUSES.has(subscriber.status)) return 'member';
+  return 'traveler';
+}
+
 export default async function handler(req, res) {
   setOriginHeaders(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -93,27 +131,39 @@ export default async function handler(req, res) {
     }
     await redis.del(`magic:${token}`);
 
-    let trsId = null;
-    const keys = await redis.keys('member:*');
-    for (const key of keys) {
-      const mraw = await redis.get(key);
-      const member = typeof mraw === 'string' ? JSON.parse(mraw) : mraw;
-      if (member.email && member.email.toLowerCase() === data.email.toLowerCase()) {
-        trsId = member.trsId;
-        break;
-      }
-    }
+    const email = data.email.toLowerCase();
 
-    // Issue a shared session for .trustiamo.com when a member match is found
-    if (trsId) {
-      const session = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-      await redis.set(`session:${session}`, JSON.stringify({ trsId, email: data.email, created: Date.now() }), { ex: SESSION_SECONDS });
+    // Dual lookup: scan member:* for trsId, direct lookup for subscriber:{email}.
+    const [trsId, subscriber] = await Promise.all([
+      findTrsIdByEmail(email),
+      findSubscriberByEmail(email),
+    ]);
+
+    const mbrId = subscriber ? subscriber.mbrId : null;
+    const tier = computeTier(trsId, subscriber);
+
+    // Session issuance rule:
+    // - Issue a session if the user has any identity (trsId OR mbrId).
+    // - If neither, return verified:true with no cookie (Decision B: unchanged).
+    if (trsId || mbrId) {
+      const session = Math.random().toString(36).substring(2)
+        + Math.random().toString(36).substring(2)
+        + Math.random().toString(36).substring(2);
+      const sessionData = {
+        trsId: trsId || null,
+        mbrId: mbrId || null,
+        email,
+        tier,
+        created: Date.now(),
+      };
+      await redis.set(`session:${session}`, JSON.stringify(sessionData), { ex: SESSION_SECONDS });
       const cookie = `ts_session=${session}; Domain=.trustiamo.com; Path=/; Max-Age=${SESSION_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
       res.setHeader('Set-Cookie', cookie);
-      return res.status(200).json({ verified: true, trsId });
+      return res.status(200).json({ verified: true, trsId, mbrId, tier, email });
     }
 
-    return res.status(200).json({ verified: true, trsId: null, email: data.email });
+    // No identity match — unchanged behavior from previous version.
+    return res.status(200).json({ verified: true, trsId: null, mbrId: null, tier: 'traveler', email });
   }
 
   // Check current session
@@ -124,7 +174,13 @@ export default async function handler(req, res) {
     const raw = await redis.get(`session:${session}`);
     if (!raw) return res.status(200).json({ signedIn: false });
     const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return res.status(200).json({ signedIn: true, trsId: data.trsId });
+    return res.status(200).json({
+      signedIn: true,
+      trsId: data.trsId || null,
+      mbrId: data.mbrId || null,
+      tier: data.tier || 'traveler',
+      email: data.email || null,
+    });
   }
 
   // Sign out — clear session
