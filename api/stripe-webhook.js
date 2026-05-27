@@ -9,8 +9,26 @@ export const config = {
   },
 };
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// Two Stripe clients: one for live mode, one for test mode.
+// We use the test-mode client when an incoming event has livemode === false.
+// Signature verification uses STRIPE_WEBHOOK_SECRET separately and works for both.
+const stripeLive = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripeTest = process.env.STRIPE_SECRET_KEY_TEST
+  ? new Stripe(process.env.STRIPE_SECRET_KEY_TEST)
+  : null;
+
 const redis = Redis.fromEnv();
+
+// Pick the right Stripe client for API calls based on the event's livemode flag.
+function stripeForEvent(event) {
+  if (event.livemode === false) {
+    if (!stripeTest) {
+      throw new Error('Received test-mode event but STRIPE_SECRET_KEY_TEST is not set');
+    }
+    return stripeTest;
+  }
+  return stripeLive;
+}
 
 // Helper: read the raw request body as a Buffer.
 async function getRawBody(req) {
@@ -22,8 +40,8 @@ async function getRawBody(req) {
 }
 
 // Resolve the email for a subscription event by fetching the Stripe customer.
-async function resolveCustomerEmail(customerId) {
-  const customer = await stripe.customers.retrieve(customerId);
+async function resolveCustomerEmail(stripeClient, customerId) {
+  const customer = await stripeClient.customers.retrieve(customerId);
   if (customer.deleted) {
     throw new Error(`Stripe customer ${customerId} is deleted`);
   }
@@ -39,13 +57,8 @@ function formatMbrId(n) {
 }
 
 // Handle customer.subscription.created
-// Rules:
-// - If subscriber:{email} does not exist: create it with a new mbrId.
-// - If it exists and stripeSubscriptionId matches: idempotent no-op, just touch updatedAt.
-// - If it exists and stripeSubscriptionId differs: cancel-and-resubscribe case.
-//   Keep mbrId and joinedAt. Overwrite stripeSubscriptionId, customerId, status.
-async function handleSubscriptionCreated(subscription) {
-  const email = await resolveCustomerEmail(subscription.customer);
+async function handleSubscriptionCreated(stripeClient, subscription) {
+  const email = await resolveCustomerEmail(stripeClient, subscription.customer);
   const key = `subscriber:${email}`;
   const now = new Date().toISOString();
 
@@ -55,7 +68,6 @@ async function handleSubscriptionCreated(subscription) {
     : null;
 
   if (existing && existing.stripeSubscriptionId === subscription.id) {
-    // Idempotent replay. Touch updatedAt and status; do nothing else.
     existing.status = subscription.status;
     existing.updatedAt = now;
     await redis.set(key, JSON.stringify(existing));
@@ -64,7 +76,6 @@ async function handleSubscriptionCreated(subscription) {
   }
 
   if (existing) {
-    // Cancel-and-resubscribe: same human, new Stripe subscription.
     existing.stripeCustomerId = subscription.customer;
     existing.stripeSubscriptionId = subscription.id;
     existing.status = subscription.status;
@@ -74,7 +85,6 @@ async function handleSubscriptionCreated(subscription) {
     return;
   }
 
-  // Fresh subscriber. Allocate a new mbrId.
   const counter = await redis.incr('mbr:counter');
   const mbrId = formatMbrId(counter);
   const record = {
@@ -91,12 +101,8 @@ async function handleSubscriptionCreated(subscription) {
 }
 
 // Handle customer.subscription.deleted
-// Rules:
-// - If subscriber:{email} exists: set status to "canceled", touch updatedAt. Do NOT delete the record.
-//   Reason: we want to preserve mbrId and joinedAt in case the human resubscribes (Decision 2a).
-// - If it does not exist: log and no-op. We received a delete for a subscription we never recorded.
-async function handleSubscriptionDeleted(subscription) {
-  const email = await resolveCustomerEmail(subscription.customer);
+async function handleSubscriptionDeleted(stripeClient, subscription) {
+  const email = await resolveCustomerEmail(stripeClient, subscription.customer);
   const key = `subscriber:${email}`;
   const now = new Date().toISOString();
 
@@ -138,23 +144,34 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Could not read request body' });
   }
 
+  // Signature verification uses stripeLive's static method, which doesn't
+  // require a per-mode client — constructEvent only checks the signature
+  // and parses the payload. Either client's static method would work.
   let event;
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, secret);
+    event = Stripe.webhooks.constructEvent(rawBody, signature, secret);
   } catch (err) {
     console.error('Signature verification failed:', err.message);
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
-  console.log(`[stripe-webhook] received event ${event.id} of type ${event.type}`);
+  console.log(`[stripe-webhook] received event ${event.id} of type ${event.type} livemode=${event.livemode}`);
+
+  let stripeClient;
+  try {
+    stripeClient = stripeForEvent(event);
+  } catch (err) {
+    console.error(err.message);
+    return res.status(500).json({ error: err.message });
+  }
 
   try {
     switch (event.type) {
       case 'customer.subscription.created':
-        await handleSubscriptionCreated(event.data.object);
+        await handleSubscriptionCreated(stripeClient, event.data.object);
         break;
       case 'customer.subscription.deleted':
-        await handleSubscriptionDeleted(event.data.object);
+        await handleSubscriptionDeleted(stripeClient, event.data.object);
         break;
       case 'customer.subscription.updated':
         console.log(`[stripe-webhook] event ${event.type} will be handled in Step 3`);
@@ -164,7 +181,6 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error(`[stripe-webhook] handler error for ${event.type}:`, err.message);
-    // Return 500 so Stripe retries. The handler failed; we want another shot.
     return res.status(500).json({ error: `Handler error: ${err.message}` });
   }
 
