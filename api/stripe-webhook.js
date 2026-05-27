@@ -100,6 +100,31 @@ async function handleSubscriptionCreated(stripeClient, subscription) {
   console.log(`[stripe-webhook] created (new) for ${email} mbrId=${mbrId} sub=${subscription.id}`);
 }
 
+// Handle customer.subscription.updated
+// Rules:
+// - If subscriber:{email} exists: patch status and updatedAt only.
+//   Do not touch mbrId, email, joinedAt, stripeCustomerId, stripeSubscriptionId.
+// - If subscriber:{email} does not exist: log and no-op. Decision: the
+//   created event is the authoritative creation signal; updated does not
+//   create records.
+async function handleSubscriptionUpdated(stripeClient, subscription) {
+  const email = await resolveCustomerEmail(stripeClient, subscription.customer);
+  const key = `subscriber:${email}`;
+  const now = new Date().toISOString();
+
+  const existingRaw = await redis.get(key);
+  if (!existingRaw) {
+    console.log(`[stripe-webhook] updated for ${email}: no existing record, ignoring`);
+    return;
+  }
+
+  const existing = typeof existingRaw === 'string' ? JSON.parse(existingRaw) : existingRaw;
+  existing.status = subscription.status;
+  existing.updatedAt = now;
+  await redis.set(key, JSON.stringify(existing));
+  console.log(`[stripe-webhook] updated for ${email} mbrId=${existing.mbrId} status=${subscription.status}`);
+}
+
 // Handle customer.subscription.deleted
 async function handleSubscriptionDeleted(stripeClient, subscription) {
   const email = await resolveCustomerEmail(stripeClient, subscription.customer);
@@ -174,7 +199,7 @@ export default async function handler(req, res) {
         await handleSubscriptionDeleted(stripeClient, event.data.object);
         break;
       case 'customer.subscription.updated':
-        console.log(`[stripe-webhook] event ${event.type} will be handled in Step 3`);
+        await handleSubscriptionUpdated(stripeClient, event.data.object);
         break;
       default:
         console.log(`[stripe-webhook] event type ${event.type} not handled`);
