@@ -174,11 +174,16 @@ export default async function handler(req, res) {
     const raw = await redis.get(`session:${session}`);
     if (!raw) return res.status(200).json({ signedIn: false });
     const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    // Backward compat: old sessions written before Phase 3.5 lack `tier`.
+    // Recompute it from trsId/mbrId presence so a pre-existing signed-in
+    // somebody is correctly tagged tier=somebody without forcing re-signin.
+    const tier = data.tier
+      || (data.trsId ? 'somebody' : (data.mbrId ? 'member' : 'traveler'));
     return res.status(200).json({
       signedIn: true,
       trsId: data.trsId || null,
       mbrId: data.mbrId || null,
-      tier: data.tier || 'traveler',
+      tier,
       email: data.email || null,
     });
   }
