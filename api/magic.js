@@ -145,7 +145,7 @@ export default async function handler(req, res) {
     // Session issuance rule:
     // - Issue a session if the user has any identity (trsId OR mbrId).
     // - If neither, return verified:true with no cookie (Decision B: unchanged).
-    if (trsId || mbrId) {
+    if (tier !== 'traveler') {
       const session = Math.random().toString(36).substring(2)
         + Math.random().toString(36).substring(2)
         + Math.random().toString(36).substring(2);
