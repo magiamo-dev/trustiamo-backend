@@ -25,7 +25,7 @@ export default async function handler(req, res) {
   if (!session_id) return res.status(400).json({ error: 'session_id required' });
 
   try {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST);
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
     const session = await stripe.checkout.sessions.retrieve(session_id);
 
     if (session.payment_status !== 'paid') {
