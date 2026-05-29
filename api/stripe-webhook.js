@@ -11,7 +11,6 @@ export const config = {
 
 // Two Stripe clients: one for live mode, one for test mode.
 // We use the test-mode client when an incoming event has livemode === false.
-// Signature verification uses STRIPE_WEBHOOK_SECRET separately and works for both.
 const stripeLive = new Stripe(process.env.STRIPE_SECRET_KEY);
 const stripeTest = process.env.STRIPE_SECRET_KEY_TEST
   ? new Stripe(process.env.STRIPE_SECRET_KEY_TEST)
@@ -37,6 +36,37 @@ async function getRawBody(req) {
     chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   }
   return Buffer.concat(chunks);
+}
+
+// Verify the Stripe signature using both test and live secrets.
+// Returns the verified event, or throws if neither secret verifies.
+function verifyEventWithEitherSecret(rawBody, signature) {
+  const testSecret = process.env.STRIPE_WEBHOOK_SECRET_TEST;
+  const liveSecret = process.env.STRIPE_WEBHOOK_SECRET_LIVE;
+
+  if (!testSecret && !liveSecret) {
+    throw new Error('Neither STRIPE_WEBHOOK_SECRET_TEST nor STRIPE_WEBHOOK_SECRET_LIVE is set');
+  }
+
+  let lastError;
+
+  if (testSecret) {
+    try {
+      return Stripe.webhooks.constructEvent(rawBody, signature, testSecret);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (liveSecret) {
+    try {
+      return Stripe.webhooks.constructEvent(rawBody, signature, liveSecret);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Signature verification failed against all configured secrets');
 }
 
 // Resolve the email for a subscription event by fetching the Stripe customer.
@@ -101,12 +131,6 @@ async function handleSubscriptionCreated(stripeClient, subscription) {
 }
 
 // Handle customer.subscription.updated
-// Rules:
-// - If subscriber:{email} exists: patch status and updatedAt only.
-//   Do not touch mbrId, email, joinedAt, stripeCustomerId, stripeSubscriptionId.
-// - If subscriber:{email} does not exist: log and no-op. Decision: the
-//   created event is the authoritative creation signal; updated does not
-//   create records.
 async function handleSubscriptionUpdated(stripeClient, subscription) {
   const email = await resolveCustomerEmail(stripeClient, subscription.customer);
   const key = `subscriber:${email}`;
@@ -155,12 +179,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing Stripe-Signature header' });
   }
 
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
-    console.error('STRIPE_WEBHOOK_SECRET is not set');
-    return res.status(500).json({ error: 'Webhook secret not configured' });
-  }
-
   let rawBody;
   try {
     rawBody = await getRawBody(req);
@@ -169,12 +187,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Could not read request body' });
   }
 
-  // Signature verification uses stripeLive's static method, which doesn't
-  // require a per-mode client — constructEvent only checks the signature
-  // and parses the payload. Either client's static method would work.
   let event;
   try {
-    event = Stripe.webhooks.constructEvent(rawBody, signature, secret);
+    event = verifyEventWithEitherSecret(rawBody, signature);
   } catch (err) {
     console.error('Signature verification failed:', err.message);
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
