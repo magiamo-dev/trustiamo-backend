@@ -1,6 +1,17 @@
 import { Redis } from '@upstash/redis';
 const redis = Redis.fromEnv();
 
+const RESERVED_NETWORK_NAMES = [
+  'Magiamo', 'Hospiamo', 'Trustiamo', 'Hi3',
+  'Anchor', 'Admin', 'Concierge',
+  'Somebody', 'Member', 'Traveler', 'Stranger', 'System',
+];
+
+function isReservedName(name) {
+  const lower = name.toLowerCase();
+  return RESERVED_NETWORK_NAMES.some(r => r.toLowerCase() === lower);
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -32,6 +43,9 @@ export default async function handler(req, res) {
     const clean = networkName.replace(/[^a-zA-Z\s]/g, '').trim();
     if (clean.length < 4 || clean.length > 15) {
       return res.status(400).json({ error: 'Network name must be 4 to 15 letters' });
+    }
+    if (isReservedName(clean)) {
+      return res.status(400).json({ error: 'Name taken' });
     }
     const raw = await redis.get(`member:${trsId}`);
     if (!raw) return res.status(404).json({ error: 'Member not found' });
