@@ -157,19 +157,21 @@ export default async function handler(req, res) {
     return res.status(200).json({ available: true });
   }
 
-  // List members — for forest visualization (tier-aware)
+  // List members — for forest visualization (three tiers)
   // Somebody session: full directory — trsId, networkName, invitedBy,
   //   specialty, city, pulse. Never personalCode (owner-only via get).
-  // Everyone else (no session / member / traveler): structure only —
+  // Member session: identity + structure — trsId, networkName, invitedBy.
+  //   Names and IDs, but no detail.
+  // Everyone else (no session / traveler): structure only —
   //   trsId, invitedBy. No names, no fields, no codes.
   if (req.method === 'GET' && req.query.action === 'list') {
-    const isSomebody = !!(session && session.tier === 'somebody');
+    const tier = session ? session.tier : null;
     const keys = await redis.keys('member:*');
     const members = [];
     for (const key of keys) {
       const raw = await redis.get(key);
       const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (isSomebody) {
+      if (tier === 'somebody') {
         members.push({
           trsId: member.trsId,
           networkName: member.networkName,
@@ -177,6 +179,12 @@ export default async function handler(req, res) {
           specialty: member.specialty || '',
           city: member.city || '',
           pulse: member.pulse || null,
+        });
+      } else if (tier === 'member') {
+        members.push({
+          trsId: member.trsId,
+          networkName: member.networkName,
+          invitedBy: member.invitedBy || null,
         });
       } else {
         members.push({
