@@ -32,6 +32,7 @@ export default async function handler(req, res) {
   const ALLOWED_ORIGINS = [
     'https://me.trustiamo.com',
     'https://trustiamo.com',
+    'https://www.trustiamo.com',
     'https://forest.trustiamo.com',
     'https://invite.trustiamo.com',
   ];
