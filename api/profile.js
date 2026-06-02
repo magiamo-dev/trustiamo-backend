@@ -11,9 +11,6 @@ function parseCookies(req) {
   return out;
 }
 
-// Read the signed-in identity from the ts_session cookie.
-// Mirrors api/magic.js action=check, including the backward-compat
-// tier fallback for sessions written before Phase 3.5.
 async function getSession(req) {
   const cookies = parseCookies(req);
   const token = cookies.ts_session;
@@ -82,31 +79,13 @@ export default async function handler(req, res) {
     return res.status(200).json({ found: false });
   }
 
-  // Claim profile — unchanged this pass (onboarding email-attach;
-  // deferred to a follow-up that needs the invite frontend)
+  // Claim profile — DISABLED. The network-name-only claim was an
+  // account-takeover vector: anyone who knew an unclaimed somebody's
+  // network name could attach their own email and sign in as them.
+  // To be rebuilt as invite-code-authorized before any new invite
+  // goes out. Until then it attaches nothing.
   if (req.method === 'POST' && req.query.action === 'claim') {
-    const { email, networkName } = req.body;
-    if (!email || !networkName) {
-      return res.status(400).json({ error: 'Email and network name required' });
-    }
-
-    const clean = email.toLowerCase().trim();
-    const keys = await redis.keys('member:*');
-
-    for (const key of keys) {
-      const raw = await redis.get(key);
-      const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (member.networkName.toLowerCase() === networkName.toLowerCase()) {
-        if (member.email && member.email.toLowerCase() !== clean) {
-          return res.status(400).json({ error: 'This profile has already been claimed' });
-        }
-        member.email = clean;
-        await redis.set(key, JSON.stringify(member));
-        return res.status(200).json({ claimed: true, trsId: member.trsId });
-      }
-    }
-
-    return res.status(404).json({ error: 'Network name does not match our records' });
+    return res.status(403).json({ error: 'Claim is temporarily disabled' });
   }
 
   // Update profile — signed-in owner only
