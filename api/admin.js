@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const secret = (req.query.secret || req.headers['x-admin-secret'] || '').trim();
- if (secret !== (process.env.ADMIN_SECRET || '').trim()) {
+  if (secret !== (process.env.ADMIN_SECRET || '').trim()) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -47,6 +47,21 @@ export default async function handler(req, res) {
     if (isReservedName(clean)) {
       return res.status(400).json({ error: 'Name taken' });
     }
+
+    // Duplicate-name check — patterned on the invite-side check.
+    // Reject if a DIFFERENT member already uses this name (and has an
+    // email, matching the invite-side semantics). Self is skipped so a
+    // no-op or case-only rename on the same record is allowed.
+    const allKeys = await redis.keys('member:*');
+    for (const key of allKeys) {
+      if (key === `member:${trsId}`) continue;
+      const otherRaw = await redis.get(key);
+      const other = typeof otherRaw === 'string' ? JSON.parse(otherRaw) : otherRaw;
+      if (other.networkName && other.networkName.toLowerCase() === clean.toLowerCase() && other.email) {
+        return res.status(400).json({ error: 'Name taken' });
+      }
+    }
+
     const raw = await redis.get(`member:${trsId}`);
     if (!raw) return res.status(404).json({ error: 'Member not found' });
     const member = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -54,17 +69,7 @@ export default async function handler(req, res) {
     await redis.set(`member:${trsId}`, JSON.stringify(member));
     return res.status(200).json({ updated: trsId, networkName: clean });
   }
-if (req.query.action === 'seed') {
-    const founder = {
-      networkName: 'Naked Sequoia',
-      trsId: 'TRS-000001',
-      personalCode: 'w7i2yb2',
-      invitedBy: null,
-      joinedAt: '2026-05-10T00:00:00.000Z',
-    };
-    await redis.set('member:TRS-000001', JSON.stringify(founder));
-    return res.status(200).json({ seeded: 'TRS-000001', networkName: 'Naked Sequoia' });
-  }
+
   if (req.method === 'POST' && req.query.action === 'delete') {
     const { trsId } = req.body;
     if (!trsId) return res.status(400).json({ error: 'TRS ID required' });
