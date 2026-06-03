@@ -92,6 +92,7 @@ function computeTier(trsId, subscriber) {
 export default async function handler(req, res) {
   setOriginHeaders(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
+  res.setHeader('Cache-Control', 'no-store');
 
   // Send magic link
   if (req.method === 'POST' && req.query.action === 'send') {
