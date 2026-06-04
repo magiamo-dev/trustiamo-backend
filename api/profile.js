@@ -81,13 +81,14 @@ export default async function handler(req, res) {
     return res.status(200).json({ found: false });
   }
 
-  // Claim profile — DISABLED. The network-name-only claim was an
+  // Claim profile — RETIRED. The network-name-only claim was an
   // account-takeover vector: anyone who knew an unclaimed somebody's
   // network name could attach their own email and sign in as them.
-  // To be rebuilt as invite-code-authorized before any new invite
-  // goes out. Until then it attaches nothing.
+  // Permanently superseded by the invite-code-authorized accept in
+  // api/invite.js, which attaches the email under the invite-code gate.
+  // This stays a hard 403 so no name-only claim path can ever return.
   if (req.method === 'POST' && req.query.action === 'claim') {
-    return res.status(403).json({ error: 'Claim is temporarily disabled' });
+    return res.status(403).json({ error: 'Claim is retired' });
   }
 
   // Update profile — signed-in owner only
