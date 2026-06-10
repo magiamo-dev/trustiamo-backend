@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     "ROUTING RULES",
     "You serve three recognition states. The recognition state of the current reader is passed in context when available.",
     "Unrecognized traveler (no email given): can see the public layer. Truth walk is open. List is visible at unrecognized-traveler tier (vouch counts, first-name tastes when public, one-line notes). You answer in full voice. You gate network-internal data: full names, TRS numbers, internal fields.",
-    "Member (35 dollars per month, has session via magic link): view-only deeper access. In the forest a member sees the real network names and TRS numbers of the somebodies, and the lineage and weight - who recognized whom. A member does not see detail - specialty, city, or pulse; that stays somebody-only. The TRS number is the through-line: the same network name and TRS number a member sees in the forest is what they recognize in The Storm. Future: gated access to the CG Member channel.",
+    "Member (35 dollars per month, has session via magic link): view-only deeper access. First names visible on the list (when they exist in public network data), anonymized pulse echoes, deeper view of the forest with personal identity protected. Future: gated access to the CG Member channel.",
     "Somebody (TRS identifier): full network state. Names as they appear on public surfaces, TRS numbers, chain depth and structure, internal field data when relevant, pulse. Speak plainly - they know the vocabulary.",
     "Default tier when recognition state is unclear: unrecognized traveler. Do not assume up.",
     "Routing destinations: /collection when a reader wants to see the list of vouched entries. /list the get-closer surface for unrecognized travelers. /me when a signed-in somebody asks about their own profile. /forest when anyone wants to see the network visually. /truth when a reader wants the why - eleven-room walk. The Storm on Common Ground (app.cg/c/hospitality) when a question is conversation, not signal. The three footer links (Trustiamo on Universal Profiles, The Storm, Create your own Universal Profile) when asked about the rails.",
@@ -92,7 +92,7 @@ export default async function handler(req, res) {
     "This place has gone beyond what other employers do for the people who work for them. They hire and support people with disabilities and neurodivergence. They build programs for single parents, gig workers, and people whose voices are usually not heard. The Trustiamo network reviews and approves each Unique Employer designation - it is rare and it is earned.",
     "",
     "MEMBERSHIP",
-    "35 dollars per month. View-only deeper access to the forest - the real network names and TRS numbers of the somebodies, the lineage, and the weight of who recognized whom. Detail stays within the somebody tier - what a somebody is working on, where they are, their pulse. The TRS number is the through-line: the same name a member sees in the forest is what they recognize in The Storm. Future: gated access to the CG Member channel for direct interaction with somebodies.",
+    "35 dollars per month. View-only deeper access to the forest and the list - shape, depth, weight, connections visible; personal identity protected. Future: gated access to the CG Member channel for direct interaction with somebodies.",
     "Not a loyalty program. Loyalty programs are effective at retaining customers - points, tiers, status belong to the program, not the traveler. Trustiamo is not that. There are no points. No status to chase.",
     "Membership is the action that says I am with you, I see the truth, I am supporting the movement.",
     "You do not pitch. You do not close. Mention membership only when asked how to get closer, how to support, or how to engage further.",
@@ -135,7 +135,15 @@ export default async function handler(req, res) {
   ].join("\n");
 
   try {
-    const { messages } = req.body;
+    const { messages, tier } = req.body;
+    const ALLOWED_TIERS = ['traveler', 'member', 'somebody'];
+    const effTier = ALLOWED_TIERS.includes(tier) ? tier : 'traveler';
+    const systemWithTier = SYSTEM + "\n\n" + [
+      "CURRENT READER RECOGNITION STATE",
+      "The current reader's recognition state is: " + effTier + ".",
+      "Apply the ROUTING RULES tier for this exact state. traveler = Unrecognized traveler. member = Member. somebody = Somebody.",
+      "Never assume a higher tier than the one given. If the state is traveler, gate all network-internal data: full names beyond public first names, TRS numbers, internal fields."
+    ].join("\n");
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -146,7 +154,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
         max_tokens: 1000,
-        system: SYSTEM,
+        system: systemWithTier,
         messages,
       }),
     });
